@@ -20,7 +20,7 @@ from train_utils.train_utils import train_model
 
 def parse_config():
     parser = argparse.ArgumentParser(description='arg parser')
-    parser.add_argument('--cfg_file', type=str, default=None, help='specify the config for training')
+    parser.add_argument('--cfg_file', type=str, default='./cfgs/kitti_models/DBQ-SSD.yaml', help='specify the config for training')
 
     parser.add_argument('--batch_size', type=int, default=None, required=False, help='batch size for training')
     parser.add_argument('--epochs', type=int, default=None, required=False, help='number of epochs to train for')
@@ -53,6 +53,11 @@ def parse_config():
 
     args = parser.parse_args()
 
+
+    ##############
+    # args.cfg_file = '/home/liangao/AlanLiang/3D_Perception/OpenPCDet/tools/cfgs/kitti_models/gaus_bridge_vn.yaml'
+    ##############
+
     cfg_from_yaml_file(args.cfg_file, cfg)
     cfg.TAG = Path(args.cfg_file).stem
     cfg.EXP_GROUP_PATH = '/'.join(args.cfg_file.split('/')[1:-1])  # remove 'cfgs' and 'xxxx.yaml'
@@ -67,6 +72,7 @@ def parse_config():
 
 def main():
     args, cfg = parse_config()
+
     if args.launcher == 'none':
         dist_train = False
         total_gpus = 1
@@ -162,6 +168,12 @@ def main():
         model = nn.parallel.DistributedDataParallel(model, device_ids=[cfg.LOCAL_RANK % torch.cuda.device_count()])
     logger.info(f'----------- Model {cfg.MODEL.NAME} created, param count: {sum([m.numel() for m in model.parameters()])} -----------')
     logger.info(model)
+
+
+    #######################
+    n_parameters = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    logger.info(f'Total number of params: {n_parameters}')
+    #######################
 
     lr_scheduler, lr_warmup_scheduler = build_scheduler(
         optimizer, total_iters_each_epoch=len(train_loader), total_epochs=args.epochs,

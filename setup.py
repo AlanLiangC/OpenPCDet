@@ -114,7 +114,12 @@ if __name__ == '__main__':
                     'src/interpolate_gpu.cu',
                     'src/sampling.cpp',
                     'src/sampling_gpu.cu',
-
+                    'src/ball_query_sparse.cpp',
+                    'src/ball_query_sparse_gpu.cu',
+                    'src/group_points_sparse.cpp',
+                    'src/group_points_sparse_gpu.cu',
+                    'src/sparse_indexing.cpp',
+                    'src/sparse_indexing_gpu.cu',
                 ],
             ),
             make_cuda_ext(

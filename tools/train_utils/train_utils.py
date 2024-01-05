@@ -95,6 +95,7 @@ def train_one_epoch(model, optimizer, train_loader, model_func, lr_scheduler, ac
                     remaining_second_each_epoch = second_each_iter * (total_it_each_epoch - cur_it)
                     remaining_second_all = second_each_iter * ((total_epochs - cur_epoch) * total_it_each_epoch - cur_it)
                     
+                    logger.info(disp_dict)
                     logger.info(
                         'Train: {:>4d}/{} ({:>3.0f}%) [{:>4d}/{} ({:>3.0f}%)]  '
                         'Loss: {loss.val:#.4g} ({loss.avg:#.3g})  '

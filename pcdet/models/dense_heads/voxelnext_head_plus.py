@@ -4,8 +4,10 @@ import torch.nn as nn
 from torch.nn.init import kaiming_normal_
 from ..model_utils import centernet_utils
 from ..model_utils import model_nms_utils
-from ...utils import loss_utils
+from ...utils import loss_utils, common_utils, box_utils, box_coder_utils
 from ...utils.spconv_utils import replace_feature, spconv
+from ...ops.roiaware_pool3d import roiaware_pool3d_utils
+
 import copy
 from easydict import EasyDict
 
@@ -47,7 +49,7 @@ class SeparateHead(nn.Module):
         return ret_dict
 
 
-class VoxelNeXtHead(nn.Module):
+class VoxelNeXtHeadPlus(nn.Module):
     def __init__(self, model_cfg, input_channels, num_class, class_names, grid_size, point_cloud_range, voxel_size,
                  predict_boxes_when_training=False):
         super().__init__()
@@ -109,9 +111,19 @@ class VoxelNeXtHead(nn.Module):
         self.forward_ret_dict = {}
         self.build_losses()
 
+        ##########################################
+        ##**************************************##
+        iassd_target_cfg = self.model_cfg.IASSD_TARGET_CONFIG
+        self.iassd_box_coder = getattr(box_coder_utils, iassd_target_cfg.BOX_CODER)(
+            **iassd_target_cfg.BOX_CODER_CONFIG
+        )
+        ##**************************************##
+        ##########################################
+
     def build_losses(self):
         self.add_module('hm_loss_func', loss_utils.FocalLossSparse())
         self.add_module('reg_loss_func', loss_utils.RegLossSparse())
+        self.add_module('ins_loss_func', loss_utils.WeightedClassificationLoss())
         if self.iou_branch:
             self.add_module('crit_iou', loss_utils.IouLossSparse())
             self.add_module('crit_iou_reg', loss_utils.IouRegLossSparse())
@@ -291,6 +303,14 @@ class VoxelNeXtHead(nn.Module):
                 tb_dict['iou_reg_loss_head_%d' % idx] = iou_reg_loss.item()
             else:
                 loss += hm_loss + loc_loss
+
+        ######################
+        ##******************##
+        sa_loss_cls, tb_dict_0 = self.get_sa_ins_layer_loss()
+        tb_dict.update(tb_dict_0)
+        loss += sa_loss_cls
+        ##******************##
+        ######################
 
         tb_dict['rpn_loss'] = loss.item()
         return loss, tb_dict
@@ -509,6 +529,278 @@ class VoxelNeXtHead(nn.Module):
             roi_scores[bs_idx, :num_boxes] = pred_dicts[bs_idx]['pred_scores']
             roi_labels[bs_idx, :num_boxes] = pred_dicts[bs_idx]['pred_labels']
         return rois, roi_scores, roi_labels
+    
+############################################################
+##********************************************************##
+    def assign_stack_targets_IASSD(self, points, gt_boxes, extend_gt_boxes=None, weighted_labels=False,
+                             ret_box_labels=False, ret_offset_labels=True,
+                             set_ignore_flag=True, use_ball_constraint=False, central_radius=2.0,
+                             use_query_assign=False, central_radii=2.0, use_ex_gt_assign=False, fg_pc_ignore=False,
+                             binary_label=False):
+        """
+        Args:
+            points: (N1 + N2 + N3 + ..., 4) [bs_idx, x, y, z]
+            gt_boxes: (B, M, 8)
+            extend_gt_boxes: [B, M, 8]
+        Returns:
+            point_cls_labels: (N1 + N2 + N3 + ...), long type, 0:background, -1:ignored
+            point_box_labels: (N1 + N2 + N3 + ..., code_size)
+
+        """
+        assert len(points.shape) == 2 and points.shape[1] == 4, 'points.shape=%s' % str(points.shape)
+        assert len(gt_boxes.shape) == 3 and gt_boxes.shape[2] == 8, 'gt_boxes.shape=%s' % str(gt_boxes.shape)
+        assert extend_gt_boxes is None or len(extend_gt_boxes.shape) == 3 and extend_gt_boxes.shape[2] == 8, \
+            'extend_gt_boxes.shape=%s' % str(extend_gt_boxes.shape)
+        batch_size = gt_boxes.shape[0]
+        bs_idx = points[:, 0]
+        point_cls_labels = points.new_zeros(points.shape[0]).long()
+        point_box_labels = gt_boxes.new_zeros((points.shape[0], 8)) if ret_box_labels else None
+        box_idxs_labels = points.new_zeros(points.shape[0]).long() 
+        gt_boxes_of_fg_points = []
+        gt_box_of_points = gt_boxes.new_zeros((points.shape[0], 8))
+
+        for k in range(batch_size):            
+            bs_mask = (bs_idx == k)
+            points_single = points[bs_mask][:, 1:4]
+            point_cls_labels_single = point_cls_labels.new_zeros(bs_mask.sum())
+            box_idxs_of_pts = roiaware_pool3d_utils.points_in_boxes_gpu(
+                points_single.unsqueeze(dim=0), gt_boxes[k:k + 1, :, 0:7].contiguous()
+            ).long().squeeze(dim=0)
+            box_fg_flag = (box_idxs_of_pts >= 0)
+
+            if use_query_assign: ##
+                centers = gt_boxes[k:k + 1, :, 0:3]
+                query_idxs_of_pts = roiaware_pool3d_utils.points_in_ball_query_gpu(
+                    points_single.unsqueeze(dim=0), centers.contiguous(), central_radii
+                    ).long().squeeze(dim=0) 
+                query_fg_flag = (query_idxs_of_pts >= 0)
+                if fg_pc_ignore:
+                    fg_flag = query_fg_flag ^ box_fg_flag 
+                    extend_box_idxs_of_pts[box_idxs_of_pts!=-1] = -1
+                    box_idxs_of_pts = extend_box_idxs_of_pts
+                else:
+                    fg_flag = query_fg_flag
+                    box_idxs_of_pts = query_idxs_of_pts
+            elif use_ex_gt_assign: ##
+                extend_box_idxs_of_pts = roiaware_pool3d_utils.points_in_boxes_gpu(
+                    points_single.unsqueeze(dim=0), extend_gt_boxes[k:k+1, :, 0:7].contiguous()
+                ).long().squeeze(dim=0)
+                extend_fg_flag = (extend_box_idxs_of_pts >= 0)
+                
+                extend_box_idxs_of_pts[box_fg_flag] = box_idxs_of_pts[box_fg_flag] #instance points should keep unchanged
+
+                if fg_pc_ignore:
+                    fg_flag = extend_fg_flag ^ box_fg_flag
+                    extend_box_idxs_of_pts[box_idxs_of_pts!=-1] = -1
+                    box_idxs_of_pts = extend_box_idxs_of_pts
+                else:
+                    fg_flag = extend_fg_flag 
+                    box_idxs_of_pts = extend_box_idxs_of_pts 
+                                
+            elif set_ignore_flag: 
+                extend_box_idxs_of_pts = roiaware_pool3d_utils.points_in_boxes_gpu(
+                    points_single.unsqueeze(dim=0), extend_gt_boxes[k:k+1, :, 0:7].contiguous()
+                ).long().squeeze(dim=0)
+                fg_flag = box_fg_flag
+                ignore_flag = fg_flag ^ (extend_box_idxs_of_pts >= 0)
+                point_cls_labels_single[ignore_flag] = -1
+
+            elif use_ball_constraint: 
+                box_centers = gt_boxes[k][box_idxs_of_pts][:, 0:3].clone()
+                box_centers[:, 2] += gt_boxes[k][box_idxs_of_pts][:, 5] / 2
+                ball_flag = ((box_centers - points_single).norm(dim=1) < central_radius)
+                fg_flag = box_fg_flag & ball_flag
+
+            else:
+                raise NotImplementedError
+
+            gt_box_of_fg_points = gt_boxes[k][box_idxs_of_pts[fg_flag]]
+            point_cls_labels_single[fg_flag] = 1 if self.num_class == 1 or binary_label else gt_box_of_fg_points[:, -1].long()
+            point_cls_labels[bs_mask] = point_cls_labels_single
+            bg_flag = (point_cls_labels_single == 0) # except ignore_id
+            # box_bg_flag
+            fg_flag = fg_flag ^ (fg_flag & bg_flag)
+            gt_box_of_fg_points = gt_boxes[k][box_idxs_of_pts[fg_flag]]
+
+            gt_boxes_of_fg_points.append(gt_box_of_fg_points)
+            box_idxs_labels[bs_mask] = box_idxs_of_pts
+            gt_box_of_points[bs_mask] = gt_boxes[k][box_idxs_of_pts]
+
+            if ret_box_labels and gt_box_of_fg_points.shape[0] > 0:
+                point_box_labels_single = point_box_labels.new_zeros((bs_mask.sum(), 8))
+                fg_point_box_labels = self.iassd_box_coder.encode_torch(
+                    gt_boxes=gt_box_of_fg_points[:, :-1], points=points_single[fg_flag],
+                    gt_classes=gt_box_of_fg_points[:, -1].long()
+                )
+                point_box_labels_single[fg_flag] = fg_point_box_labels
+                point_box_labels[bs_mask] = point_box_labels_single
+
+
+        gt_boxes_of_fg_points = torch.cat(gt_boxes_of_fg_points, dim=0)
+        targets_dict = {
+            'point_cls_labels': point_cls_labels,
+            'point_box_labels': point_box_labels,
+            'gt_box_of_fg_points': gt_boxes_of_fg_points,
+            'box_idxs_labels': box_idxs_labels,
+            'gt_box_of_points': gt_box_of_points,
+        }
+        return targets_dict
+
+    def assign_targets_IASSD(self, input_dict):
+        """
+        Args:
+            input_dict:
+                batch_size: int
+                centers: (N1 + N2 + N3 + ..., 4) [bs_idx, x, y, z]
+                centers_origin: (N1 + N2 + N3 + ..., 4) [bs_idx, x, y, z]
+                encoder_coords: List of point_coords in SA
+                gt_boxes (optional): (B, M, 8)
+        Returns:
+            target_dict:
+            ...
+        """
+        target_cfg = self.model_cfg.IASSD_TARGET_CONFIG
+        gt_boxes = input_dict['gt_boxes']
+        if gt_boxes.shape[-1] == 10:   #nscence
+            gt_boxes = torch.cat((gt_boxes[..., 0:7], gt_boxes[..., -1:]), dim=-1)
+
+        targets_dict_center = {}
+        # assert gt_boxes.shape.__len__() == 3, 'gt_boxes.shape=%s' % str(gt_boxes.shape)
+        # assert point_coords.shape.__len__() in [2], 'points.shape=%s' % str(point_coords.shape)
+        batch_size = input_dict['batch_size']      
+        if target_cfg.get('EXTRA_WIDTH', False):  # multi class extension
+            extend_gt = box_utils.enlarge_box3d_for_class(
+                gt_boxes.view(-1, gt_boxes.shape[-1]), extra_width=target_cfg.EXTRA_WIDTH
+            ).view(batch_size, -1, gt_boxes.shape[-1])
+        else:
+            extend_gt = gt_boxes
+
+        extend_gt_boxes = box_utils.enlarge_box3d(
+            extend_gt.view(-1, extend_gt.shape[-1]), extra_width=target_cfg.GT_EXTRA_WIDTH
+        ).view(batch_size, -1, gt_boxes.shape[-1])
+        assert gt_boxes.shape.__len__() == 3, 'gt_boxes.shape=%s' % str(gt_boxes.shape)
+        if target_cfg.get('INS_AWARE_ASSIGN', False):
+            sa_ins_labels, sa_gt_box_of_fg_points, sa_xyz_coords, sa_gt_box_of_points, sa_box_idxs_labels = [],[],[],[],[]
+            sa_ins_preds = input_dict['sa_ins_preds']
+            for i in range(1, len(sa_ins_preds)): # valid when i = 1,2 for IA-SSD
+                # if sa_ins_preds[i].__len__() == 0:
+                #     continue
+                sa_xyz = input_dict['encoder_coords'][i]
+                if i == 1:
+                    extend_gt_boxes = box_utils.enlarge_box3d(
+                        gt_boxes.view(-1, gt_boxes.shape[-1]), extra_width=[0.5, 0.5, 0.5]  #[0.2, 0.2, 0.2]
+                    ).view(batch_size, -1, gt_boxes.shape[-1])             
+                    sa_targets_dict = self.assign_stack_targets_IASSD(
+                        points=sa_xyz.view(-1,sa_xyz.shape[-1]).detach(), gt_boxes=gt_boxes, extend_gt_boxes=extend_gt_boxes,
+                        set_ignore_flag=True, use_ex_gt_assign= False 
+                    )
+                if i >= 2:
+                # if False:
+                    extend_gt_boxes = box_utils.enlarge_box3d(
+                        gt_boxes.view(-1, gt_boxes.shape[-1]), extra_width=[0.5, 0.5, 0.5]
+                    ).view(batch_size, -1, gt_boxes.shape[-1])             
+                    sa_targets_dict = self.assign_stack_targets_IASSD(
+                        points=sa_xyz.view(-1,sa_xyz.shape[-1]).detach(), gt_boxes=gt_boxes, extend_gt_boxes=extend_gt_boxes,
+                        set_ignore_flag=False, use_ex_gt_assign= True 
+                    )
+
+                sa_xyz_coords.append(sa_xyz)
+                sa_ins_labels.append(sa_targets_dict['point_cls_labels'])
+                sa_gt_box_of_fg_points.append(sa_targets_dict['gt_box_of_fg_points'])
+                sa_gt_box_of_points.append(sa_targets_dict['gt_box_of_points'])
+                sa_box_idxs_labels.append(sa_targets_dict['box_idxs_labels'])                
+                
+            targets_dict_center['sa_ins_labels'] = sa_ins_labels
+            targets_dict_center['sa_gt_box_of_fg_points'] = sa_gt_box_of_fg_points
+            targets_dict_center['sa_xyz_coords'] = sa_xyz_coords
+            targets_dict_center['sa_gt_box_of_points'] = sa_gt_box_of_points
+            targets_dict_center['sa_box_idxs_labels'] = sa_box_idxs_labels
+        
+        return targets_dict_center
+
+    def generate_sa_center_ness_mask(self):
+        sa_pos_mask = self.forward_ret_dict['iassd_target_dicts']['sa_ins_labels']
+        sa_gt_boxes = self.forward_ret_dict['iassd_target_dicts']['sa_gt_box_of_fg_points']
+        sa_xyz_coords = self.forward_ret_dict['iassd_target_dicts']['sa_xyz_coords']
+        sa_centerness_mask = []
+        for i in range(len(sa_pos_mask)):
+            pos_mask = sa_pos_mask[i] > 0
+            gt_boxes = sa_gt_boxes[i]
+            xyz_coords = sa_xyz_coords[i].view(-1,sa_xyz_coords[i].shape[-1])[:,1:]
+            xyz_coords = xyz_coords[pos_mask].clone().detach()
+            offset_xyz = xyz_coords[:, 0:3] - gt_boxes[:, 0:3]
+            offset_xyz_canical = common_utils.rotate_points_along_z(offset_xyz.unsqueeze(dim=1), -gt_boxes[:, 6]).squeeze(dim=1)
+
+            template = gt_boxes.new_tensor(([1, 1, 1], [-1, -1, -1])) / 2
+            margin = gt_boxes[:, None, 3:6].repeat(1, 2, 1) * template[None, :, :]
+            distance = margin - offset_xyz_canical[:, None, :].repeat(1, 2, 1)
+            distance[:, 1, :] = -1 * distance[:, 1, :]
+            distance_min = torch.where(distance[:, 0, :] < distance[:, 1, :], distance[:, 0, :], distance[:, 1, :])
+            distance_max = torch.where(distance[:, 0, :] > distance[:, 1, :], distance[:, 0, :], distance[:, 1, :])
+
+            centerness = distance_min / distance_max
+            centerness = centerness[:, 0] * centerness[:, 1] * centerness[:, 2]
+            centerness = torch.clamp(centerness, min=1e-6)
+            centerness = torch.pow(centerness, 1/3)
+
+            centerness_mask = pos_mask.new_zeros(pos_mask.shape).float()
+            centerness_mask[pos_mask] = centerness
+
+            sa_centerness_mask.append(centerness_mask)
+        return sa_centerness_mask
+
+    
+    def get_sa_ins_layer_loss(self, tb_dict=None):
+        sa_ins_labels = self.forward_ret_dict['iassd_target_dicts']['sa_ins_labels']
+        sa_ins_preds = self.forward_ret_dict['iassd_target_dicts']['sa_ins_preds']
+        sa_centerness_mask = self.generate_sa_center_ness_mask()
+        sa_ins_loss, ignore = 0, 0
+        for i in range(len(sa_ins_labels)): # valid when i =1, 2
+            if len(sa_ins_preds[i]) != 0:
+                try:
+                    point_cls_preds = sa_ins_preds[i][...,1:].view(-1, self.num_class)
+                except:
+                    point_cls_preds = sa_ins_preds[i][...,1:].view(-1, 1)
+
+            else:
+                ignore += 1
+                continue
+            point_cls_labels = sa_ins_labels[i].view(-1)
+            positives = (point_cls_labels > 0)
+            negative_cls_weights = (point_cls_labels == 0) * 1.0
+            cls_weights = (negative_cls_weights + 1.0 * positives).float()
+            pos_normalizer = positives.sum(dim=0).float()
+            cls_weights /= torch.clamp(pos_normalizer, min=1.0)
+
+            one_hot_targets = point_cls_preds.new_zeros(*list(point_cls_labels.shape), self.num_class + 1)
+            one_hot_targets.scatter_(-1, (point_cls_labels * (point_cls_labels >= 0).long()).unsqueeze(dim=-1).long(), 1.0)
+            one_hot_targets = one_hot_targets[..., 1:]
+
+            if ('ctr' in self.model_cfg.LOSS_CONFIG.SAMPLE_METHOD_LIST[i+1][0]):
+                centerness_mask = sa_centerness_mask[i]
+                one_hot_targets = one_hot_targets * centerness_mask.unsqueeze(-1).repeat(1, one_hot_targets.shape[1])
+
+            point_loss_ins = self.ins_loss_func(point_cls_preds, one_hot_targets, weights=cls_weights).mean(dim=-1).sum()        
+            loss_weights_dict = self.model_cfg.LOSS_CONFIG.LOSS_WEIGHTS
+            point_loss_ins = point_loss_ins * loss_weights_dict.get('ins_aware_weight',[1]*len(sa_ins_labels))[i]
+
+            sa_ins_loss += point_loss_ins
+            if tb_dict is None:
+                tb_dict = {}
+            tb_dict.update({
+                'sa%s_loss_ins' % str(i): point_loss_ins.item(),
+                'sa%s_pos_num' % str(i): pos_normalizer.item()
+            })
+
+        sa_ins_loss = sa_ins_loss / (len(sa_ins_labels) - ignore)
+        tb_dict.update({
+                'sa_loss_ins': sa_ins_loss.item(),
+            })
+        return sa_ins_loss, tb_dict
+
+##********************************************************##
+############################################################
+
 
     def _get_voxel_infos(self, x):
         spatial_shape = x.spatial_shape
@@ -540,6 +832,22 @@ class VoxelNeXtHead(nn.Module):
                 data_dict['gt_boxes'], num_voxels, spatial_indices, spatial_shape
             )
             self.forward_ret_dict['target_dicts'] = target_dict
+
+        ###################################
+        ##*******************************##
+        iassd_ret_dict = {
+                    'ctr_offsets': data_dict['ctr_offsets'],
+                    'centers': data_dict['centers'],
+                    'centers_origin': data_dict['centers_origin'],
+                    'sa_ins_preds': data_dict['sa_ins_preds'],
+                    }
+        
+        if self.training:
+            iassd_targets_dict = self.assign_targets_IASSD(data_dict)
+            iassd_ret_dict.update(iassd_targets_dict)
+            self.forward_ret_dict['iassd_target_dicts'] = iassd_ret_dict
+        ##*******************************##
+        ###################################
 
         self.forward_ret_dict['pred_dicts'] = pred_dicts
         self.forward_ret_dict['voxel_indices'] = voxel_indices

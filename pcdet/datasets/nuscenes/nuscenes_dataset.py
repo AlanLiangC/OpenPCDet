@@ -393,6 +393,14 @@ def create_nuscenes_info(version, data_path, save_path, max_sweeps=10, with_cam=
         print('test sample: %d' % len(train_nusc_infos))
         with open(save_path / f'nuscenes_infos_{max_sweeps}sweeps_test.pkl', 'wb') as f:
             pickle.dump(train_nusc_infos, f)
+    
+    elif version == 'v1.0-mini':
+        print('train sample: %d, val sample: %d' % (len(train_nusc_infos), len(val_nusc_infos)))
+        with open(save_path / f'nuscenes_mini_infos_{max_sweeps}sweeps_train.pkl', 'wb') as f:
+            pickle.dump(train_nusc_infos, f)
+        with open(save_path / f'nuscenes_mini_infos_{max_sweeps}sweeps_val.pkl', 'wb') as f:
+            pickle.dump(val_nusc_infos, f)
+    
     else:
         print('train sample: %d, val sample: %d' % (len(train_nusc_infos), len(val_nusc_infos)))
         with open(save_path / f'nuscenes_infos_{max_sweeps}sweeps_train.pkl', 'wb') as f:
@@ -420,15 +428,18 @@ if __name__ == '__main__':
         dataset_cfg.VERSION = args.version
         create_nuscenes_info(
             version=dataset_cfg.VERSION,
-            data_path=ROOT_DIR / 'data' / 'nuscenes',
-            save_path=ROOT_DIR / 'data' / 'nuscenes',
+            # data_path=ROOT_DIR / 'data' / 'nuscenes',
+            # save_path=ROOT_DIR / 'data' / 'nuscenes',
+            data_path = Path('/data2/liangao/Dataset/openpcd_nuscenes'),
+            save_path = Path('/data2/liangao/Dataset/openpcd_nuscenes'),
             max_sweeps=dataset_cfg.MAX_SWEEPS,
             with_cam=args.with_cam
         )
 
         nuscenes_dataset = NuScenesDataset(
             dataset_cfg=dataset_cfg, class_names=None,
-            root_path=ROOT_DIR / 'data' / 'nuscenes',
+            # root_path=ROOT_DIR / 'data' / 'nuscenes',
+            root_path = Path('/data2/liangao/Dataset/openpcd_nuscenes'),
             logger=common_utils.create_logger(), training=True
         )
         nuscenes_dataset.create_groundtruth_database(max_sweeps=dataset_cfg.MAX_SWEEPS)

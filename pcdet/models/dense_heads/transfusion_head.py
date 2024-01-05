@@ -150,22 +150,22 @@ class TransFusionHead(nn.Module):
 
     def predict(self, inputs):
         batch_size = inputs.shape[0]
-        lidar_feat = self.shared_conv(inputs)
+        lidar_feat = self.shared_conv(inputs) # [4, 128, 180, 180]
 
         lidar_feat_flatten = lidar_feat.view(
             batch_size, lidar_feat.shape[1], -1
-        )
-        bev_pos = self.bev_pos.repeat(batch_size, 1, 1).to(lidar_feat.device)
+        ) # [4, 128, 32400]
+        bev_pos = self.bev_pos.repeat(batch_size, 1, 1).to(lidar_feat.device) # [4, 32400, 2]
 
         # query initialization
         dense_heatmap = self.heatmap_head(lidar_feat)
-        heatmap = dense_heatmap.detach().sigmoid()
+        heatmap = dense_heatmap.detach().sigmoid() # [4, 10, 180, 180]
         padding = self.nms_kernel_size // 2
         local_max = torch.zeros_like(heatmap)
         local_max_inner = F.max_pool2d(
-            heatmap, kernel_size=self.nms_kernel_size, stride=1, padding=0
+            heatmap, kernel_size=self.nms_kernel_size, stride=1, padding=0 # [4, 10, 178, 178]
         )
-        local_max[:, :, padding:(-padding), padding:(-padding)] = local_max_inner
+        local_max[:, :, padding:(-padding), padding:(-padding)] = local_max_inner # [4, 10, 180, 180]
         # for Pedestrian & Traffic_cone in nuScenes
         if self.dataset_name == "nuScenes":
             local_max[ :, 8, ] = F.max_pool2d(heatmap[:, 8], kernel_size=1, stride=1, padding=0)
@@ -180,22 +180,22 @@ class TransFusionHead(nn.Module):
         # top num_proposals among all classes
         top_proposals = heatmap.view(batch_size, -1).argsort(dim=-1, descending=True)[
             ..., : self.num_proposals
-        ]
+        ] # [4, 200]
         top_proposals_class = top_proposals // heatmap.shape[-1]
         top_proposals_index = top_proposals % heatmap.shape[-1]
         query_feat = lidar_feat_flatten.gather(
             index=top_proposals_index[:, None, :].expand(-1, lidar_feat_flatten.shape[1], -1),
             dim=-1,
         )
-        self.query_labels = top_proposals_class
+        self.query_labels = top_proposals_class # [4, 200]
 
-        # add category embedding
+        # add category embedding # [4, 10, 200]
         one_hot = F.one_hot(top_proposals_class, num_classes=self.num_classes).permute(0, 2, 1)
         
-        query_cat_encoding = self.class_encoding(one_hot.float())
+        query_cat_encoding = self.class_encoding(one_hot.float()) # [4, 128, 200]
         query_feat += query_cat_encoding
 
-        query_pos = bev_pos.gather(
+        query_pos = bev_pos.gather( # [4, 200, 2]
             index=top_proposals_index[:, None, :].permute(0, 2, 1).expand(-1, -1, bev_pos.shape[-1]),
             dim=1,
         )
@@ -218,7 +218,7 @@ class TransFusionHead(nn.Module):
         return res_layer
 
     def forward(self, batch_dict):
-        feats = batch_dict['spatial_features_2d']
+        feats = batch_dict['spatial_features_2d'] # [4, 512, 180, 180]
         res = self.predict(feats)
         if not self.training:
             bboxes = self.get_bboxes(res)

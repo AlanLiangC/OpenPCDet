@@ -67,11 +67,11 @@ class TransformerDecoderLayer(nn.Module):
     def forward(self, query, key, query_pos, key_pos, key_padding_mask=None, attn_mask=None):
         # NxCxP to PxNxC
         if self.self_posembed is not None:
-            query_pos_embed = self.self_posembed(query_pos).permute(2, 0, 1)
+            query_pos_embed = self.self_posembed(query_pos).permute(2, 0, 1) # [200, 4, 128]
         else:
             query_pos_embed = None
         if self.cross_posembed is not None:
-            key_pos_embed = self.cross_posembed(key_pos).permute(2, 0, 1)
+            key_pos_embed = self.cross_posembed(key_pos).permute(2, 0, 1) # [32400, 4, 128]
         else:
             key_pos_embed = None
 
@@ -79,8 +79,8 @@ class TransformerDecoderLayer(nn.Module):
         key = key.permute(2, 0, 1)
 
         if not self.cross_only:
-            q = k = v = self.with_pos_embed(query, query_pos_embed)
-            query2 = self.self_attn(q, k, value=v)[0]
+            q = k = v = self.with_pos_embed(query, query_pos_embed) # [200, 4, 128]
+            query2 = self.self_attn(q, k, value=v)[0] # [200, 4, 128]
             query = query + self.dropout1(query2)
             query = self.norm1(query)
         

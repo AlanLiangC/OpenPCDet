@@ -15,6 +15,8 @@ from .pillarnet import PillarNet
 from .voxelnext import VoxelNeXt
 from .transfusion import TransFusion
 from .bevfusion import BevFusion
+from .IASSD import IASSD
+from .DBQSSD import DBQSSD
 
 __all__ = {
     'Detector3DTemplate': Detector3DTemplate,
@@ -35,6 +37,8 @@ __all__ = {
     'VoxelNeXt': VoxelNeXt,
     'TransFusion': TransFusion,
     'BevFusion': BevFusion,
+    'IASSD': IASSD,
+    'DBQSSD': DBQSSD
 }
 
 

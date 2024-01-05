@@ -1,0 +1,9 @@
+2023-11-30 10:59:44,636   INFO  -----------------Quick Demo of OpenPCDet-------------------------
+2023-11-30 10:59:44,638   INFO  Loading KITTI dataset
+2023-11-30 10:59:44,743   INFO  Total samples for KITTI dataset: 3769
+2023-11-30 10:59:44,743   INFO  Total number of samples: 	3769
+2023-11-30 11:08:31,407   INFO  -----------------Quick Demo of OpenPCDet-------------------------
+2023-11-30 11:08:31,409   INFO  Loading KITTI dataset
+2023-11-30 11:08:31,514   INFO  Total samples for KITTI dataset: 3769
+2023-11-30 11:08:31,514   INFO  Total number of samples: 	3769
+2023-11-30 11:09:02,278   INFO  Demo done.
