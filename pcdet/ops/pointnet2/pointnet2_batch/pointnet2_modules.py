@@ -49,14 +49,14 @@ class _PointnetSAModuleBase(nn.Module):
         self.pool_method = 'max_pool'
 
     def forward(self, xyz: torch.Tensor, features: torch.Tensor = None, new_xyz=None) -> (torch.Tensor, torch.Tensor):
-        """
+        '''
         :param xyz: (B, N, 3) tensor of the xyz coordinates of the features
         :param features: (B, N, C) tensor of the descriptors of the the features
         :param new_xyz:
         :return:
             new_xyz: (B, npoint, 3) tensor of the new features' xyz
-            new_features: (B, npoint, \sum_k(mlps[k][-1])) tensor of the new_features descriptors
-        """
+            new_features: (B, npoint, sum_k(mlps[k][-1])) tensor of the new_features descriptors
+        '''
         new_features_list = []
 
         xyz_flipped = xyz.transpose(1, 2).contiguous()
@@ -88,11 +88,11 @@ class _PointnetSAModuleBase(nn.Module):
 
 
 class PointnetSAModuleMSG(_PointnetSAModuleBase):
-    """Pointnet set abstraction layer with multiscale grouping"""
+    '''Pointnet set abstraction layer with multiscale grouping'''
 
     def __init__(self, *, npoint: int, radii: List[float], nsamples: List[int], mlps: List[List[int]], bn: bool = True,
                  use_xyz: bool = True, pool_method='max_pool'):
-        """
+        '''
         :param npoint: int
         :param radii: list of float, list of radii to group with
         :param nsamples: list of int, number of samples in each ball query
@@ -100,7 +100,7 @@ class PointnetSAModuleMSG(_PointnetSAModuleBase):
         :param bn: whether to use batchnorm
         :param use_xyz:
         :param pool_method: max_pool / avg_pool
-        """
+        '''
         super().__init__()
 
         assert len(radii) == len(nsamples) == len(mlps)
@@ -132,11 +132,11 @@ class PointnetSAModuleMSG(_PointnetSAModuleBase):
 
 
 class PointnetSAModule(PointnetSAModuleMSG):
-    """Pointnet set abstraction layer"""
+    '''Pointnet set abstraction layer'''
 
     def __init__(self, *, mlp: List[int], npoint: int = None, radius: float = None, nsample: int = None,
                  bn: bool = True, use_xyz: bool = True, pool_method='max_pool'):
-        """
+        '''
         :param mlp: list of int, spec of the pointnet before the global max_pool
         :param npoint: int, number of features
         :param radius: float, radius of ball
@@ -144,7 +144,7 @@ class PointnetSAModule(PointnetSAModuleMSG):
         :param bn: whether to use batchnorm
         :param use_xyz:
         :param pool_method: max_pool / avg_pool
-        """
+        '''
         super().__init__(
             mlps=[mlp], npoint=npoint, radii=[radius], nsamples=[nsample], bn=bn, use_xyz=use_xyz,
             pool_method=pool_method
@@ -152,13 +152,13 @@ class PointnetSAModule(PointnetSAModuleMSG):
 
 
 class PointnetFPModule(nn.Module):
-    r"""Propigates the features of one set to another"""
+    r'''Propigates the features of one set to another'''
 
     def __init__(self, *, mlp: List[int], bn: bool = True):
-        """
+        '''
         :param mlp: list of int
         :param bn: whether to use batchnorm
-        """
+        '''
         super().__init__()
 
         shared_mlps = []
@@ -173,14 +173,14 @@ class PointnetFPModule(nn.Module):
     def forward(
             self, unknown: torch.Tensor, known: torch.Tensor, unknow_feats: torch.Tensor, known_feats: torch.Tensor
     ) -> torch.Tensor:
-        """
+        '''
         :param unknown: (B, n, 3) tensor of the xyz positions of the unknown features
         :param known: (B, m, 3) tensor of the xyz positions of the known features
         :param unknow_feats: (B, C1, n) tensor of the features to be propigated to
         :param known_feats: (B, C2, m) tensor of features to be propigated
         :return:
             new_features: (B, mlp[-1], n) tensor of the features of the unknown features
-        """
+        '''
         if known is not None:
             dist, idx = pointnet2_utils.three_nn(unknown, known)
             dist_recip = 1.0 / (dist + 1e-8)
@@ -202,7 +202,7 @@ class PointnetFPModule(nn.Module):
         return new_features.squeeze(-1)
 
 class PointnetSAModuleMSG_WithSampling(_PointnetSAModuleBase):
-    """Pointnet set abstraction layer with specific downsampling and multiscale grouping """
+    '''Pointnet set abstraction layer with specific downsampling and multiscale grouping '''
 
     def __init__(self, *,
                  npoint_list: List[int],
@@ -217,7 +217,7 @@ class PointnetSAModuleMSG_WithSampling(_PointnetSAModuleBase):
                  aggregation_mlp: List[int],
                  confidence_mlp: List[int],
                  num_class):
-        """
+        '''
         :param npoint_list: list of int, number of samples for every sampling type
         :param sample_range_list: list of list of int, sample index range [left, right] for every sampling type
         :param sample_type_list: list of str, list of used sampling type, d-fps or f-fps
@@ -230,7 +230,7 @@ class PointnetSAModuleMSG_WithSampling(_PointnetSAModuleBase):
         :param aggregation_mlp: list of int, spec aggregation mlp
         :param confidence_mlp: list of int, spec confidence mlp
         :param num_class: int, class for process
-        """
+        '''
         super().__init__()
         self.sample_type_list = sample_type_list
         self.sample_range_list = sample_range_list
@@ -312,7 +312,7 @@ class PointnetSAModuleMSG_WithSampling(_PointnetSAModuleBase):
 
 
     def forward(self, xyz: torch.Tensor, features: torch.Tensor = None, cls_features: torch.Tensor = None, new_xyz=None, ctr_xyz=None):
-        """
+        '''
         :param xyz: (B, N, 3) tensor of the xyz coordinates of the features
         :param features: (B, C, N) tensor of the descriptors of the the features
         :param cls_features: (B, N, num_class) tensor of the descriptors of the the confidence (classification) features 
@@ -320,9 +320,9 @@ class PointnetSAModuleMSG_WithSampling(_PointnetSAModuleBase):
         "param ctr_xyz: tensor of the xyz coordinates of the centers 
         :return:
             new_xyz: (B, npoint, 3) tensor of the new features' xyz
-            new_features: (B, \sum_k(mlps[k][-1]), npoint) tensor of the new_features descriptors
+            new_features: (B, sum_k(mlps[k][-1]), npoint) tensor of the new_features descriptors
             cls_features: (B, npoint, num_class) tensor of confidence (classification) features
-        """
+        '''
         new_features_list = []
         xyz_flipped = xyz.transpose(1, 2).contiguous() 
         sampled_idx_list = []
@@ -464,7 +464,7 @@ class PointnetSAModuleMSG_WithSampling(_PointnetSAModuleBase):
         return new_xyz, new_features, cls_features
 
 class Vote_layer(nn.Module):
-    """ Light voting module with limitation"""
+    ''' Light voting module with limitation'''
     def __init__(self, mlp_list, pre_channel, max_translate_range):
         super().__init__()
         self.mlp_list = mlp_list
@@ -516,7 +516,7 @@ class Vote_layer(nn.Module):
         return vote_xyz, new_features, xyz_select, ctr_offsets
 
 class DynamicPointnetSAModuleMSG_WithSampling(_PointnetSAModuleBase):
-    """Pointnet set abstraction layer with specific downsampling and multiscale grouping """
+    '''Pointnet set abstraction layer with specific downsampling and multiscale grouping '''
 
     def __init__(self, *,
                  npoint_list: List[int],
@@ -537,7 +537,7 @@ class DynamicPointnetSAModuleMSG_WithSampling(_PointnetSAModuleBase):
                  confidence_mlp: List[int],
                  num_class,
                  layer_index):
-        """
+        '''
         :param npoint_list: list of int, number of samples for every sampling type
         :param sample_range_list: list of list of int, sample index range [left, right] for every sampling type
         :param sample_type_list: list of str, list of used sampling type, d-fps or f-fps
@@ -550,7 +550,7 @@ class DynamicPointnetSAModuleMSG_WithSampling(_PointnetSAModuleBase):
         :param aggregation_mlp: list of int, spec aggregation mlp
         :param confidence_mlp: list of int, spec confidence mlp
         :param num_class: int, class for process
-        """
+        '''
         super().__init__()
         self.sample_type_list = sample_type_list
         self.sample_range_list = sample_range_list
@@ -716,7 +716,7 @@ class DynamicPointnetSAModuleMSG_WithSampling(_PointnetSAModuleBase):
             return cost 
 
     def forward(self, xyz: torch.Tensor, features: torch.Tensor = None, cls_features: torch.Tensor = None, new_xyz=None, ctr_xyz=None, ctr_features=None):
-        """
+        '''
         :param xyz: (B, N, 3) tensor of the xyz coordinates of the features
         :param features: (B, C, N) tensor of the descriptors of the the features
         :param cls_features: (B, N, num_class) tensor of the descriptors of the the confidence (classification) features 
@@ -724,9 +724,9 @@ class DynamicPointnetSAModuleMSG_WithSampling(_PointnetSAModuleBase):
         "param ctr_xyz: tensor of the xyz coordinates of the centers 
         :return:
             new_xyz: (B, npoint, 3) tensor of the new features' xyz
-            new_features: (B, \sum_k(mlps[k][-1]), npoint) tensor of the new_features descriptors
+            new_features: (B, sum_k(mlps[k][-1]), npoint) tensor of the new_features descriptors
             cls_features: (B, npoint, num_class) tensor of confidence (classification) features
-        """
+        '''
         new_features_list = []
         xyz_flipped = xyz.transpose(1, 2).contiguous() 
         sampled_idx_list = []
@@ -807,7 +807,7 @@ class DynamicPointnetSAModuleMSG_WithSampling(_PointnetSAModuleBase):
                     idx_div = []
                     for i in range(len(xyz_tmp)):
                         per_xyz = xyz_tmp[i]
-                        ry = torch.atan(per_xyz[:,0]/per_xyz[:,1])
+                        ry = torch.atan(per_xyz[:,0]/per_xyz[:,1]) # 16384
                         storted_ry, indince = ry.sort(dim=0, descending=False)
                         per_xyz_sorted = per_xyz[indince]
                         per_xyz_sorted_div = per_xyz_sorted.view(part_num, -1 ,3)
@@ -815,14 +815,14 @@ class DynamicPointnetSAModuleMSG_WithSampling(_PointnetSAModuleBase):
                         per_idx_div = indince.view(part_num,-1)
                         xyz_div.append(per_xyz_sorted_div)
                         idx_div.append(per_idx_div)
-                    xyz_div = torch.cat(xyz_div ,dim=0)
-                    idx_div = torch.cat(idx_div ,dim=0)
+                    xyz_div = torch.cat(xyz_div ,dim=0) # [8, 4096, 3]
+                    idx_div = torch.cat(idx_div ,dim=0) # [8, 4096]
                     idx_sampled = pointnet2_utils.furthest_point_sample(xyz_div, (npoint//part_num))
-
+                    # [8, 1024]
                     indince_div = []
                     for idx_sampled_per, idx_per in zip(idx_sampled, idx_div):                    
                         indince_div.append(idx_per[idx_sampled_per.long()])
-                    index = torch.cat(indince_div, dim=-1)
+                    index = torch.cat(indince_div, dim=-1) # [8192]
 
                     sample_idx = index.reshape(xyz.shape[0], npoint).int()
 
@@ -850,7 +850,7 @@ class DynamicPointnetSAModuleMSG_WithSampling(_PointnetSAModuleBase):
         else:
             new_xyz = ctr_xyz
         
-        B, Np, _ = new_xyz.shape
+        B, Np, _ = new_xyz.shape # [2, 4096, 3]
 
         if self.dynamic:
             if self.dynamic_group:
@@ -859,10 +859,10 @@ class DynamicPointnetSAModuleMSG_WithSampling(_PointnetSAModuleBase):
                 dynamic_features = dynamic_features.max(dim=-1).values
             else:
                 if ctr_xyz is None:
-                    dynamic_features = pointnet2_utils.gather_operation(features, sampled_idx_list)
+                    dynamic_features = pointnet2_utils.gather_operation(features, sampled_idx_list) # [2, 1, 4096] [2, 64, 1024]
                 else:
                     dynamic_features = ctr_features
-            indices, gates = self.dynamic_sampler.routing(dynamic_features)
+            indices, gates = self.dynamic_sampler.routing(dynamic_features) # [2048, 2]
 
         if len(self.groupers) > 0:
 
@@ -873,7 +873,7 @@ class DynamicPointnetSAModuleMSG_WithSampling(_PointnetSAModuleBase):
                     new_features = self.groupers[i](xyz, new_xyz, features)  # (B, C, npoint, nsample)
                     new_features = new_features.permute(0, 2, 1, 3).flatten(0, 1)
 
-                new_features = self.mlps[i](new_features)
+                new_features = self.mlps[i](new_features) # [8192, 32, 16]
                 
                 if self.pool_method == 'max_pool':
                     new_features = torch.max(new_features, dim=-1)[0] # (B*npoint, mlp[-1])
@@ -886,7 +886,7 @@ class DynamicPointnetSAModuleMSG_WithSampling(_PointnetSAModuleBase):
                     new_features = self.pre_aggregation_layers[i](new_features)
 
                 if self.dynamic:
-                    B, _, Np = dynamic_features.shape
+                    B, _, Np = dynamic_features.shape # [2, 1, 4096]
                     C = new_features.shape[-1]
                     new_features = self.dynamic_sampler.decompress(
                         new_features, features.new_zeros(B, C, Np), indices[i], gates[i])

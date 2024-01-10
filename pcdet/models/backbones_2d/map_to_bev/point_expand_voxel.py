@@ -137,8 +137,6 @@ class PointExpandVoxel2(nn.Module):
 
         return batch_dict
     
-
-
 class PointExpandVoxel3(nn.Module):
     def __init__(self, model_cfg, **kwargs):
         super().__init__()
@@ -212,5 +210,61 @@ class PointExpandVoxel3(nn.Module):
         x_conv = self.shared_conv(self.conv_out(x_conv))
 
         batch_dict['encoded_spconv_tensor'] = x_conv
+
+        return batch_dict
+    
+
+class DilatedMAP2BEV(nn.Module):
+    def __init__(self, model_cfg, **kwargs):
+        super().__init__()
+        self.model_cfg = model_cfg
+        # self.num_bev_features = self.model_cfg.NUM_BEV_FEATURES
+        self.sh_layers = self.make_fc_layers(
+            fc_cfg=self.model_cfg.SH_FC,
+            input_channels=256,
+            output_channels=(self.model_cfg.MAX_SH + 1)**2
+        )
+
+        self.gaus_layers = self.make_fc_layers(
+            fc_cfg=[256,128],
+            input_channels=256,
+            output_channels=1
+        )
+        self.act = nn.ReLU()
+        self.num_bev_features = 128
+
+    @staticmethod
+    def make_fc_layers(fc_cfg, input_channels, output_channels):
+        fc_layers = []
+        c_in = input_channels
+        for k in range(0, fc_cfg.__len__()):
+            fc_layers.extend([
+                nn.Linear(c_in, fc_cfg[k], bias=False),
+                nn.BatchNorm1d(fc_cfg[k]),
+                nn.ReLU(),
+            ])
+            c_in = fc_cfg[k]
+        fc_layers.append(nn.Linear(c_in, output_channels, bias=True))
+        return nn.Sequential(*fc_layers)
+
+    def forward(self, batch_dict):
+        points_coord = batch_dict['encoder_coords'][4].squeeze()
+        ins_features = batch_dict['encoder_features'][4]
+        pw_features = ins_features.permute(0, 2, 1).contiguous().view(-1, ins_features.shape[1])
+        
+        pred_sh = self.sh_layers(pw_features) # N x 16
+        pred_gaus = self.gaus_layers(pw_features)
+        pred_gaus = self.act(pred_gaus)
+        assert torch.isnan(pw_features).sum() == 0
+        window_indices, window_features = al_utils.get_window_features(self.model_cfg, 
+                                                                    points_coord, 
+                                                                    pw_features=pw_features,
+                                                                    sh_features=pred_sh,
+                                                                    gaus_features=pred_gaus)
+
+        batch_dict.update(dict(
+            window_indices = window_indices, # [512, 25, 3]
+            window_features = window_features # [512, 25, 128]
+        ))
 
         return batch_dict

@@ -17,6 +17,7 @@ from .transfusion import TransFusion
 from .bevfusion import BevFusion
 from .IASSD import IASSD
 from .DBQSSD import DBQSSD
+from .dilatedformer import DilatedFormer
 
 __all__ = {
     'Detector3DTemplate': Detector3DTemplate,
@@ -38,7 +39,8 @@ __all__ = {
     'TransFusion': TransFusion,
     'BevFusion': BevFusion,
     'IASSD': IASSD,
-    'DBQSSD': DBQSSD
+    'DBQSSD': DBQSSD,
+    'DilatedFormer': DilatedFormer
 }
 
 

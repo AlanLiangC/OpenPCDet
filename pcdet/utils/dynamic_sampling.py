@@ -45,15 +45,15 @@ class DynamicSampling(nn.Module):
 
     def routing(self, x):
         B = x.shape[0]
-        gate = self.router(x)
-        self.running_gate = gate
+        gate = self.router(x) # 0 / 1
+        self.running_gate = gate # [2, 2, 4096] [2, 2, 1024]
 
         if not self.training:
             indices = [gate[:, i].nonzero().contiguous() for i in range(self.out_channels)]
             return indices, [None for i in range(self.out_channels)]
         else:
             indices = [
-                x.new_ones(B, gate.shape[-1]).nonzero().contiguous()
+                x.new_ones(B, gate.shape[-1]).nonzero().contiguous() # the row and colum of nozero params
                 for _ in range(self.out_channels)
             ]
             return indices, gate.split(1, dim=1)
@@ -70,8 +70,8 @@ class DynamicSampling(nn.Module):
         B, C, Np = res.shape
 
         if self.training:
-            gate = gate.reshape(B, 1, Np)
-            x = x.reshape(B, Np, -1).transpose(1, 2)
+            gate = gate.reshape(B, 1, Np) # [2, 1, 4096] [2, 1, 1024]
+            x = x.reshape(B, Np, -1).transpose(1, 2) # [2, 64, 4096] [2, 128, 1024]
             return x * gate
         else:
             pointnet2_utils.sparse_indexing_replace(
@@ -111,6 +111,6 @@ class DynamicRouter(nn.Module):
         return comp
 
     def forward(self, x):
-        x = self.gate(x)
-        x = self.gate_activate(x)
+        x = self.gate(x) # [2, 2, 4096] [2, 2, 1024]
+        x = self.gate_activate(x) # [2, 2, 4096] [2, 2, 1024]
         return x

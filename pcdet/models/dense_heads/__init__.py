@@ -12,6 +12,7 @@ from .IASSD_head_plus import IASSD_HeadPlus
 from .voxelnext_head_plus import VoxelNeXtHeadPlus
 from .voxelnext_head_plus_plus import VoxelNeXtHeadPlusPLus
 from .DBQSSD_head import DBQSSD_Head
+from .dilated_anchor_head import DilatedAnchorHead
 
 
 __all__ = {
@@ -28,5 +29,6 @@ __all__ = {
     'IASSD_HeadPlus': IASSD_HeadPlus,
     'VoxelNeXtHeadPlus': VoxelNeXtHeadPlus,
     'VoxelNeXtHeadPlusPLus': VoxelNeXtHeadPlusPLus,
-    'DBQSSD_Head': DBQSSD_Head
+    'DBQSSD_Head': DBQSSD_Head,
+    'DilatedAnchorHead': DilatedAnchorHead
 }

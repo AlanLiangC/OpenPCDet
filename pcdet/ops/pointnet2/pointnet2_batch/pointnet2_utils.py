@@ -518,7 +518,7 @@ class SparseQueryAndGroup(nn.Module):
         :return:
             new_features: (M, 3 + C, nsample)
         """
-        idx = sparse_ball_query(self.radius, self.nsample, xyz, new_xyz, indices)
+        idx = sparse_ball_query(self.radius, self.nsample, xyz, new_xyz, indices) # [8192, 16]
         xyz_trans = xyz.transpose(1, 2).contiguous()
         new_xyz_trans = new_xyz.transpose(1, 2).contiguous()
         grouped_xyz = sparse_grouping_operation(xyz_trans, idx, indices)  # (M, 3, nsample)

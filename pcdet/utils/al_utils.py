@@ -118,14 +118,17 @@ def voxel_inds2points(voxel_inds):
     voxel_inds[:,0] = voxel_inds[:,0]*voxel_size[0] + point_cloud_range[0]
     voxel_inds[:,1] = voxel_inds[:,1]*voxel_size[1] + point_cloud_range[1]
 
-def expand_grid(ins_points, diameter, is_voxel=False):
+def expand_grid(ins_points, diameter, is_voxel=False, reshape=True):
 
     if not is_voxel:
-        points = ins_points
+        if ins_points.dim() != 2:
+            ins_points = ins_points.reshape(-1,ins_points.shape[-1])
+            # ins_points = ins_points[:,1:]
+        # points = ins_points
         point_cloud_range = KITTI_ARGS['point_cloud_range']
         voxel_size = KITTI_ARGS['voxelsize']
 
-        x, y = points[:, 0], points[:, 1]
+        x, y = ins_points[:, 0], ins_points[:, 1]
         coord_x = (x - point_cloud_range[0]) / voxel_size[0] / 8
         coord_y = (y - point_cloud_range[1]) / voxel_size[1] / 8
 
@@ -139,7 +142,10 @@ def expand_grid(ins_points, diameter, is_voxel=False):
     coord_int = coord_int.repeat([1, diameter**2, 1])
     expend_inds = gen_stan_inds(diameter).int().to(coord_int.device)
     coord_int = coord_int + expend_inds # 256 * 25 * 2
-    coord_int_float = coord_int.float().reshape(-1,2)
+    if reshape:
+        coord_int_float = coord_int.float().reshape(-1,2)
+    else: 
+        coord_int_float = coord_int.float()
     # return coord_int_float[val_mask]
     return coord_int_float
 
@@ -341,6 +347,45 @@ def get_sparse_voxel_feature3(model_config, points_coord, pw_features, sh_featur
     val_mask = x_mask & y_mask
 
     return features_unique[val_mask], indices_unique[val_mask][:,[0,2,1]]
+
+def get_window_features(model_config, points_coord, pw_features, sh_features, gaus_features):
+    diameter = model_config.DIAMETER
+    pw_feature_dim = pw_features.shape[-1]
+    sh_feature_dim = sh_features.shape[-1]
+
+    # get expand voxel_indices
+    points = points_coord[...,1:] # [2, 256, 3]
+    coord_int_float = expand_grid(points, diameter, is_voxel=False, reshape=False) # [51200, 2]
+    batch_inds = points_coord[...,0].view(-1,1)
+    batch_inds = batch_inds.repeat([1,diameter**2])
+    batch_inds = batch_inds.unsqueeze(dim = -1)
+    coord_int_float = torch.cat([batch_inds, coord_int_float], dim=-1)
+
+    # get sh coeff
+    sh_features = sh_features.reshape(-1,1,sh_feature_dim)
+    sh_coeff = get_sh_coeff(sh_features, diameter)
+
+    # get gaussian coeff
+    # gaus_coeff = get_gaus_coeff(gaussian_radius) # [2048, 25]
+    gaus_coeff = gaussian_2d_v2(gaus_features, diameter)
+    # gaus_coeff = torch.from_numpy(gaus_coeff).to(sh_coeff.device, torch.float32)
+    gaus_coeff = gaus_coeff.unsqueeze(dim=-1)
+
+    # add coeff
+    # coeff_all = sh_coeff + gaus_coeff# 2048 * 25
+    # coeff_all = coeff_all.unsqueeze(dim = -1)
+    sh_coeff = sh_coeff.unsqueeze(dim = -1)
+
+    # merge same indices
+    pw_features = pw_features.reshape(-1, 1, pw_feature_dim)
+    pw_feature_dim = int(pw_feature_dim / 2)
+    # pw_features = pw_features.repeat([1,diameter**2,1]) * coeff_all # [1890, 25, 256]
+    pw_features = pw_features.repeat([1,diameter**2,1])
+    pw_features = pw_features[..., :pw_feature_dim] * sh_coeff + pw_features[..., pw_feature_dim:] * gaus_coeff
+    # [512, 25, 128]
+    # pw_features = pw_features.reshape(-1, pw_feature_dim)
+    return coord_int_float, pw_features
+
     
 if __name__ == '__main__':
 
