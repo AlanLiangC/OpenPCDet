@@ -1,0 +1,175 @@
+CLASS_NAMES: ['Car', 'Pedestrian', 'Cyclist']
+
+DATA_CONFIG:
+    _BASE_CONFIG_: ../tools/cfgs/dataset_configs/kitti_dataset.yaml
+
+    DATA_PROCESSOR:
+        -   NAME: mask_points_and_boxes_outside_range
+            REMOVE_OUTSIDE_BOXES: True
+
+        -   NAME: sample_points
+            NUM_POINTS: {
+                'train': 16384,
+                'test': 16384
+            }
+
+        -   NAME: shuffle_points
+            SHUFFLE_ENABLED: {
+                'train': True,
+                'test': False
+            }
+
+MODEL:
+    NAME: DilatedFormer
+    
+    BACKBONE_3D:
+        NAME: DBQSSD_Backbone
+        NUM_CLASS: 3
+        SA_CONFIG:
+            # Sampling setting:
+            NPOINT_LIST: [[4096], [1024], [512], [256], [-1], [256]]
+            SAMPLE_RANGE_LIST: [[-1], [-1], [-1], [-1], [-1], [-1]]
+            SAMPLE_METHOD_LIST: &sample_method_list [['ry-FPS'], ['D-FPS'], ['ctr_aware'], ['ctr_aware'], [], []]
+            # Group and Abstraction setting:
+            RADIUS_LIST: [[0.2,0.8], [0.8,1.6], [1.6,4.8], [], [], [4.8, 6.4]]
+            NSAMPLE_LIST: [[16,32], [16,32], [16,32], [], [], [16, 32]] 
+            MLPS: [[[16,16,32],  [32,32,64]],
+                   [[64,64,128],  [64,96,128]],
+                   [[128,128,256],  [128,256,256]],
+                   [],
+                   [128],
+                   [[256,256,512], [256,512,1024]]]
+            
+            LAYER_TYPE: ['SA_Layer', 'SA_Layer', 'SA_Layer', 'SA_Layer', 'Vote_Layer', 'SA_Layer']
+            DILATED_GROUP: [False, False, False, False, False, False] 
+            AGGREGATION_MLPS: [[64], [128], [256], [256], [], [512]]
+            # Instance-aware setting:
+            CONFIDENCE_MLPS: [[], [128], [256], [], [], []]
+            PRE_AGGREGATION_MLPS: [True, True, True, False, False, True]
+
+            LAYER_INPUT: [0, 1, 2, 3, 4, 3]
+            CTR_INDEX: [-1, -1, -1, -1, -1, 5]
+            MAX_TRANSLATE_RANGE: [3.0, 3.0, 2.0]
+            # SAVE_SAMPLE_LIST: True
+
+            DYNAMIC: [True, True, True, False, False, True]
+            #DYNAMIC_COST: [1.262796015, 0.94903174, 1.130387545, 0, 0, 1.922637284]
+            DYNAMIC_COST: [[0.276546776, 1.117151827], [0.342942774, 0.693246126], [0.324052423, 0.869811475], [0, 0], [0, 0], [0.391717553, 1.609101295]]
+            DYNAMIC_GROUP: [False, False, False, False, False, False]
+
+    MAP_TO_BEV:
+        NAME: DilatedMAP2BEV
+        SHARED_CONV_CHANNEL: 128
+        SH_FC: [256,256]
+        MAX_SH: 3
+        GAUS_RADIUS: 5
+        DIAMETER: 5
+
+    BACKBONE_2D:
+        NAME: Dilated2DBEVBackbone
+        DEPTHS: [2, 2]
+        NUM_HEADS: [4, 8]
+        WINDOW_SIZE: 5
+        MLP_RATIO: 2
+
+    DENSE_HEAD:
+        NAME: DilatedAnchorHead
+        GRID_SIZE: [1408,1600,40]
+        CLASS_AGNOSTIC: False
+
+        USE_DIRECTION_CLASSIFIER: True
+        DIR_OFFSET: 0.78539
+        DIR_LIMIT_OFFSET: 0.0
+        NUM_DIR_BINS: 2
+
+        ANCHOR_GENERATOR_CONFIG: [
+            {
+                'class_name': 'Car',
+                'anchor_sizes': [[3.9, 1.6, 1.56]],
+                'anchor_rotations': [0, 1.57],
+                'anchor_bottom_heights': [-1.78],
+                'align_center': False,
+                'feature_map_stride': 8,
+                'matched_threshold': 0.6,
+                'unmatched_threshold': 0.45
+            },
+            {
+                'class_name': 'Pedestrian',
+                'anchor_sizes': [[0.8, 0.6, 1.73]],
+                'anchor_rotations': [0, 1.57],
+                'anchor_bottom_heights': [-0.6],
+                'align_center': False,
+                'feature_map_stride': 8,
+                'matched_threshold': 0.5,
+                'unmatched_threshold': 0.35
+            },
+            {
+                'class_name': 'Cyclist',
+                'anchor_sizes': [[1.76, 0.6, 1.73]],
+                'anchor_rotations': [0, 1.57],
+                'anchor_bottom_heights': [-0.6],
+                'align_center': False,
+                'feature_map_stride': 8,
+                'matched_threshold': 0.5,
+                'unmatched_threshold': 0.35
+            }
+        ]
+
+        TARGET_ASSIGNER_CONFIG:
+            NAME: AxisAlignedTargetAssigner
+            POS_FRACTION: -1.0
+            SAMPLE_SIZE: 512
+            NORM_BY_NUM_EXAMPLES: False
+            MATCH_HEIGHT: False
+            BOX_CODER: ResidualCoder
+
+        LOSS_CONFIG:
+            LOSS_WEIGHTS: {
+                'cls_weight': 1.0,
+                'loc_weight': 2.0,
+                'dir_weight': 0.2,
+                'code_weights': [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
+            }
+
+
+    POST_PROCESSING:
+        RECALL_MODE: 'normal'  # 'normal'(default), 'detail', 'speed'(no recall info)
+        RECALL_THRESH_LIST: [0.3, 0.5, 0.7]
+        SCORE_THRESH: 0.01
+        OUTPUT_RAW_SCORE: False
+
+        EVAL_METRIC: kitti
+
+        NMS_CONFIG:
+            MULTI_CLASSES_NMS: False
+            NMS_TYPE: nms_gpu
+            NMS_THRESH: 0.01
+            NMS_PRE_MAXSIZE: 4096
+            NMS_POST_MAXSIZE: 500
+
+    DYNAMIC:
+        P: 1
+        BUDGET: 0.0
+        SCALE: 0.1
+
+
+OPTIMIZATION:
+    BATCH_SIZE_PER_GPU: 4
+    NUM_EPOCHS: 80
+
+    OPTIMIZER: adam_onecycle
+    LR: 0.01
+    WEIGHT_DECAY: 0.01
+    MOMENTUM: 0.9
+
+    MOMS: [0.95, 0.85]
+    PCT_START: 0.4
+    DIV_FACTOR: 10
+    DECAY_STEP_LIST: [35, 45]
+    LR_DECAY: 0.1
+    LR_CLIP: 0.0000001
+
+    LR_WARMUP: False
+    WARMUP_EPOCH: 1
+
+    GRAD_NORM_CLIP: 10
