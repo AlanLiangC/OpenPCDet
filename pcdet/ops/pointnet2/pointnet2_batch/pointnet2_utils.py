@@ -318,7 +318,7 @@ class QueryAndGroup(nn.Module):
         :return:
             new_features: (B, 3 + C, npoint, nsample)
         """
-        idx = ball_query(self.radius, self.nsample, xyz, new_xyz)
+        idx = ball_query(self.radius, self.nsample, xyz, new_xyz) # [8, 4096, 16]
         xyz_trans = xyz.transpose(1, 2).contiguous()
         grouped_xyz = grouping_operation(xyz_trans, idx)  # (B, 3, npoint, nsample)
         grouped_xyz -= new_xyz.transpose(1, 2).unsqueeze(-1)

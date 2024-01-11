@@ -8,6 +8,7 @@ from .spconv_unet import UNetV2
 from .dsvt import DSVT
 from .IASSD_backbone import IASSD_Backbone
 from .DBQSSD_backbone import DBQSSD_Backbone
+from .NeXTSSD_backbone import NeXTSSD_Backbone
 
 
 __all__ = {
@@ -23,5 +24,6 @@ __all__ = {
     'PillarRes18BackBone8x': PillarRes18BackBone8x,
     'DSVT': DSVT,
     'IASSD_Backbone': IASSD_Backbone,
-    'DBQSSD_Backbone': DBQSSD_Backbone
+    'DBQSSD_Backbone': DBQSSD_Backbone,
+    'NeXTSSD_Backbone': NeXTSSD_Backbone
 }
